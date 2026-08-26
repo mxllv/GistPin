@@ -1,0 +1,238 @@
+groups:
+  - name: capacity_planning_recording_rules
+    interval: 60s
+    rules:
+      - record: cluster:cpu_capacity_cores
+        expr: sum(kube_node_status_allocatable{resource="cpu"})
+
+      - record: cluster:memory_capacity_bytes
+        expr: sum(kube_node_status_allocatable{resource="memory"})
+
+      - record: cluster:gpu_capacity_count
+        expr: sum(kube_node_status_allocatable{resource="nvidia_com_gpu"})
+
+      - record: cluster:cpu_requests_cores
+        expr: sum(kube_pod_container_resource_requests{resource="cpu"})
+
+      - record: cluster:cpu_limits_cores
+        expr: sum(kube_pod_container_resource_limits{resource="cpu"})
+
+      - record: cluster:cpu_usage_avg_cores
+        expr: sum(rate(container_cpu_usage_seconds_total{container!="POD",container!=""}[5m]))
+
+      - record: cluster:memory_requests_bytes
+        expr: sum(kube_pod_container_resource_requests{resource="memory"})
+
+      - record: cluster:memory_limits_bytes
+        expr: sum(kube_pod_container_resource_limits{resource="memory"})
+
+      - record: cluster:memory_usage_avg_bytes
+        expr: sum(container_memory_working_set_bytes{container!="POD",container!=""})
+
+      - record: cluster:pod_count_total
+        expr: count(kube_pod_info)
+
+      - record: cluster:node_count_total
+        expr: count(kube_node_info{condition="ready"})
+
+      - record: cluster:cpu_utilization_pct
+        expr: |
+          (
+            sum(rate(container_cpu_usage_seconds_total{container!="POD",container!=""}[5m]))
+            /
+            sum(kube_node_status_allocatable{resource="cpu"})
+          ) * 100
+
+      - record: cluster:memory_utilization_pct
+        expr: |
+          (
+            sum(container_memory_working_set_bytes{container!="POD",container!=""})
+            /
+            sum(kube_node_status_allocatable{resource="memory"})
+          ) * 100
+
+      - record: cluster:cpu_request_utilization_pct
+        expr: |
+          (
+            sum(kube_pod_container_resource_requests{resource="cpu"})
+            /
+            sum(kube_node_status_allocatable{resource="cpu"})
+          ) * 100
+
+      - record: cluster:memory_request_utilization_pct
+        expr: |
+          (
+            sum(kube_pod_container_resource_requests{resource="memory"})
+            /
+            sum(kube_node_status_allocatable{resource="memory"})
+          ) * 100
+
+      - record: cluster:cpu_usage_vs_request_ratio
+        expr: |
+          sum(rate(container_cpu_usage_seconds_total{container!="POD",container!=""}[5m]))
+          /
+          sum(kube_pod_container_resource_requests{resource="cpu"})
+
+      - record: cluster:memory_usage_vs_request_ratio
+        expr: |
+          sum(container_memory_working_set_bytes{container!="POD",container!=""})
+          /
+          sum(kube_pod_container_resource_requests{resource="memory"})
+
+      - record: cluster:gpu_request_utilization_pct
+        expr: |
+          (
+            sum(kube_pod_container_resource_requests{resource="nvidia_com_gpu"})
+            /
+            sum(kube_node_status_allocatable{resource="nvidia_com_gpu"})
+          ) * 100
+
+      - record: namespace:cpu_requests_cores
+        expr: sum by (namespace) (kube_pod_container_resource_requests{resource="cpu"})
+
+      - record: namespace:memory_requests_bytes
+        expr: sum by (namespace) (kube_pod_container_resource_requests{resource="memory"})
+
+      - record: namespace:cpu_usage_avg_cores
+        expr: sum by (namespace) (rate(container_cpu_usage_seconds_total{container!="POD",container!=""}[5m]))
+
+      - record: namespace:memory_usage_avg_bytes
+        expr: sum by (namespace) (container_memory_working_set_bytes{container!="POD",container!=""})
+
+      - record: namespace:pod_count_total
+        expr: count by (namespace) (kube_pod_info)
+
+      - record: node:cpu_allocatable_cores
+        expr: kube_node_status_allocatable{resource="cpu"}
+
+      - record: node:memory_allocatable_bytes
+        expr: kube_node_status_allocatable{resource="memory"}
+
+      - record: node:cpu_usage_avg_cores
+        expr: sum by (node) (rate(container_cpu_usage_seconds_total{container!="POD",container!=""}[5m]))
+
+      - record: node:memory_usage_avg_bytes
+        expr: sum by (node) (container_memory_working_set_bytes{container!="POD",container!=""})
+
+  - name: capacity_planning_alerts
+    rules:
+      - alert: ClusterHighCpuUtilization
+        expr: cluster:cpu_utilization_pct > 85
+        for: 15m
+        labels:
+          severity: critical
+          category: capacity
+        annotations:
+          summary: "Cluster CPU utilization above 85%"
+          description: >
+            Cluster CPU utilization has been above 85% for 15 minutes.
+            Current value: {{ $value | printf "%.1f" }}%.
+            Consider scaling up nodes or optimizing workloads.
+
+      - alert: ClusterHighMemoryUtilization
+        expr: cluster:memory_utilization_pct > 85
+        for: 15m
+        labels:
+          severity: critical
+          category: capacity
+        annotations:
+          summary: "Cluster memory utilization above 85%"
+          description: >
+            Cluster memory utilization has been above 85% for 15 minutes.
+            Current value: {{ $value | printf "%.1f" }}%.
+            Consider scaling up nodes or reducing memory requests.
+
+      - alert: ClusterCpuUtilizationWarning
+        expr: cluster:cpu_utilization_pct > 70
+        for: 30m
+        labels:
+          severity: warning
+          category: capacity
+        annotations:
+          summary: "Cluster CPU utilization above 70%"
+          description: >
+            Cluster CPU utilization has been above 70% for 30 minutes.
+            Current value: {{ $value | printf "%.1f" }}%.
+            Plan for additional capacity within 30 days.
+
+      - alert: ClusterMemoryUtilizationWarning
+        expr: cluster:memory_utilization_pct > 70
+        for: 30m
+        labels:
+          severity: warning
+          category: capacity
+        annotations:
+          summary: "Cluster memory utilization above 70%"
+          description: >
+            Cluster memory utilization has been above 70% for 30 minutes.
+            Current value: {{ $value | printf "%.1f" }}%.
+
+      - alert: ClusterCpuRequestsOverProvisioned
+        expr: cluster:cpu_usage_vs_request_ratio < 0.5
+        for: 1h
+        labels:
+          severity: info
+          category: cost_optimization
+        annotations:
+          summary: "CPU requests significantly exceed actual usage"
+          description: >
+            CPU usage is only {{ $value | printf "%.0f" }}% of requested CPU.
+            Consider reducing CPU requests to improve scheduling and reduce costs.
+
+      - alert: ClusterMemoryRequestsOverProvisioned
+        expr: cluster:memory_usage_vs_request_ratio < 0.5
+        for: 1h
+        labels:
+          severity: info
+          category: cost_optimization
+        annotations:
+          summary: "Memory requests significantly exceed actual usage"
+          description: >
+            Memory usage is only {{ $value | printf "%.0f" }}% of requested memory.
+            Consider reducing memory requests.
+
+      - alert: ClusterNodeCountLow
+        expr: cluster:node_count_total < 3
+        for: 5m
+        labels:
+          severity: critical
+          category: availability
+        annotations:
+          summary: "Cluster has fewer than 3 nodes"
+          description: >
+            Cluster node count is {{ $value }}, which is below the
+            minimum recommended for high availability.
+
+      - alert: NamespaceHighCpuUtilization
+        expr: |
+          (
+            namespace:cpu_usage_avg_cores
+            /
+            namespace:cpu_requests_cores
+          ) > 0.9
+        for: 15m
+        labels:
+          severity: warning
+          category: capacity
+        annotations:
+          summary: "Namespace CPU usage near requests limit"
+          description: >
+            Namespace {{ $labels.namespace }} CPU usage is above 90% of
+            requested CPU. Consider increasing CPU requests.
+
+      - alert: NamespaceHighMemoryUtilization
+        expr: |
+          (
+            namespace:memory_usage_avg_bytes
+            /
+            namespace:memory_requests_bytes
+          ) > 0.9
+        for: 15m
+        labels:
+          severity: warning
+          category: capacity
+        annotations:
+          summary: "Namespace memory usage near requests limit"
+          description: >
+            Namespace {{ $labels.namespace }} memory usage is above 90% of
+            requested memory. Consider increasing memory requests.
